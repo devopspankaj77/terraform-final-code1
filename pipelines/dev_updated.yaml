@@ -1,0 +1,313 @@
+# trigger:
+#   branches:
+#     include:
+#       - main
+#       - feature/*
+
+# variables:
+#   TF_VERSION: "1.6.6"
+#   SCAN_FAIL_LEVEL: "HIGH"
+
+# pool:
+#   name: Default
+
+# stages:
+
+# # ======================================================
+# # 1 CODE & SECURITY SCANNING (SHIFT LEFT)
+# # ======================================================
+# - stage: CodeScanning
+#   displayName:  Code & Security Scanning
+#   jobs:
+
+#   # -------- tflint --------
+#   - job: tflint
+#     displayName: Terraform Lint
+#     steps:
+#     - task: CmdLine@2
+#       inputs:
+#         script: |
+#           curl -s https://raw.githubusercontent.com/terraform-linters/tflint/master/install_linux.sh | bash
+#           tflint --init
+#           tflint --format sarif > tflint.sarif || true
+
+#     - task: PublishSecurityAnalysisResults@1
+#       inputs:
+#         sarifFile: 'tflint.sarif'
+
+#   # -------- tfsec --------
+#   - job: tfsec
+#     displayName: Terraform Security (tfsec)
+#     steps:
+#     - task: CmdLine@2
+#       inputs:
+#         script: |
+#           curl -s https://raw.githubusercontent.com/aquasecurity/tfsec/master/scripts/install_linux.sh | bash
+#           tfsec . \
+#             --minimum-severity $(SCAN_FAIL_LEVEL) \
+#             --format sarif \
+#             --out tfsec.sarif || true
+
+#     - task: PublishSecurityAnalysisResults@1
+#       inputs:
+#         sarifFile: 'tfsec.sarif'
+
+#   # -------- terrascan --------
+#   - job: terrascan
+#     displayName: Terraform Compliance (Terrascan)
+#     steps:
+#     - task: CmdLine@2
+#       inputs:
+#         script: |
+#           curl -L https://github.com/tenable/terrascan/releases/download/v1.19.1/terrascan_1.19.1_Linux_x86_64.tar.gz \
+#           | tar -xz
+#           sudo mv terrascan /usr/local/bin/
+
+#           terrascan init
+#           terrascan scan -t azurerm -i terraform -o sarif > terrascan.sarif || true
+
+#     - task: PublishSecurityAnalysisResults@1
+#       inputs:
+#         sarifFile: 'terrascan.sarif'
+
+# ======================================================
+# 2 TERRAFORM VALIDATION
+# ======================================================
+# - stage: Validate
+#   displayName:  Terraform Validate
+#   dependsOn: CodeScanning
+#   jobs:
+#   - job: validate
+#     steps:
+#     - task: TerraformInstaller@1
+#       inputs:
+#         terraformVersion: $(TF_VERSION)
+
+#     - task: TerraformTask@5
+#       inputs:
+#         provider: azurerm
+#         command: init
+#         backendServiceArm: iDSsec1
+#         backendAzureRmStorageAccountName: stgiddev0001
+#         backendAzureRmContainerName: coniddev001
+#         backendAzureRmKey: dev.tfstate
+
+#     - task: TerraformTask@5
+#       inputs:
+#         provider: azurerm
+#         command: validate
+
+# # ======================================================
+# # 3 PLAN + COST VISIBILITY
+# # ======================================================
+# - stage: Plan
+#   displayName:  Terraform Plan & Cost
+#   dependsOn: Validate
+#   jobs:
+#   - job: plan
+#     steps:
+#     - task: TerraformTask@5
+#       inputs:
+#         provider: azurerm
+#         command: plan
+#         commandOptions: "-out=tfplan"
+#         environmentServiceNameAzureRM: iDSsec1
+
+#     - publish: tfplan
+#       artifact: terraform-plan
+
+#     - task: CmdLine@2
+#       displayName: Infracost
+#       inputs:
+#         script: |
+#           curl -fsSL https://raw.githubusercontent.com/infracost/infracost/master/scripts/install.sh | sh
+#           infracost breakdown --path . --show-skipped
+
+# # ======================================================
+# # 4 MANUAL APPROVAL (GOVERNANCE)
+# # ======================================================
+# - stage: Approval
+#   displayName:  Manual Approval
+#   dependsOn: Plan
+#   jobs:
+#   - job: approval
+#     pool: server
+#     steps:
+#     - task: ManualValidation@0
+#       inputs:
+#         instructions: |
+#           Review:
+#           - Terraform Plan
+#           - Security Scan Results
+#           - Cost Estimate
+
+# # ======================================================
+# # 5 APPLY (PROTECTED)
+# # ======================================================
+# - stage: Apply
+#   displayName:  Terraform Apply
+#   dependsOn: Approval
+#   condition: eq(variables['Build.SourceBranchName'], 'main')
+#   jobs:
+#   - job: apply
+#     steps:
+#     - download: current
+#       artifact: terraform-plan
+
+#     - task: TerraformTask@5
+#       inputs:
+#         provider: azurerm
+#         command: apply
+#         commandOptions: "tfplan"
+#         environmentServiceNameAzureRM: iDSsec1
+# ---------------------------------------------------------
+
+
+
+
+
+
+
+
+trigger:
+  branches:
+    include:
+      - main
+      - feature/*
+
+variables:
+  TF_VERSION: "1.6.6"
+  SCAN_FAIL_LEVEL: "HIGH"
+  # Terraform working directory (e.g. environments/dev or . for repo root)
+  TF_WORKING_DIR: "environments/dev"
+  TFVARS_FILE: "dev.tfvars"
+
+pool:
+  name: Default
+
+stages:
+
+# ======================================================
+# 1 CODE & SECURITY SCANNING (SHIFT LEFT)
+# ======================================================
+- stage: CodeScanning
+  displayName:  Code & Security Scanning
+  jobs:
+
+  # -------- tflint --------
+  - job: tflint
+    displayName: Terraform Lint
+    steps:
+    - task: CmdLine@2
+      displayName: Run TFLint
+      inputs:
+        script: |
+          curl -s https://raw.githubusercontent.com/terraform-linters/tflint/master/install_linux.sh | bash
+          tflint --init
+          tflint --format sarif > tflint.sarif || true
+
+    - task: PublishBuildArtifacts@1
+      displayName: Publish TFLint Report
+      inputs:
+        PathtoPublish: tflint.sarif
+        ArtifactName: tflint-sarif
+
+  # -------- tfsec --------
+  - job: tfsec
+    displayName: Terraform Security (tfsec)
+    steps:
+    - task: CmdLine@2
+      displayName: Run tfsec
+      inputs:
+        script: |
+          curl -s https://raw.githubusercontent.com/aquasecurity/tfsec/master/scripts/install_linux.sh | bash
+          tfsec . \
+            --minimum-severity $(SCAN_FAIL_LEVEL) \
+            --format sarif \
+            --out tfsec.sarif || true
+
+    - task: PublishBuildArtifacts@1
+      displayName: Publish tfsec Report
+      inputs:
+        PathtoPublish: tfsec.sarif
+        ArtifactName: tfsec-sarif
+
+  # -------- terrascan --------
+  # - job: terrascan
+  #   displayName: Terraform Compliance (Terrascan)
+  #   steps:
+  #   - task: CmdLine@2
+  #     displayName: Run Terrascan
+  #     inputs:
+  #       script: |
+  #         curl -L https://github.com/tenable/terrascan/releases/download/v1.19.1/terrascan_1.19.1_Linux_x86_64.tar.gz \
+  #         | tar -xz
+  #         sudo mv terrascan /usr/local/bin/
+
+  #         terrascan init
+  #         terrascan scan -t azurerm -i terraform -o sarif > terrascan.sarif || true
+
+    # - task: PublishBuildArtifacts@1
+    #   displayName: Publish Terrascan Report
+    #   inputs:
+    #     PathtoPublish: terrascan.sarif
+    #     ArtifactName: terrascan-sarif
+
+# ======================================================
+# 2 TERRAFORM PLAN + INFRA COST ESTIMATION
+# ======================================================
+- stage: PlanAndCost
+  displayName: Terraform Plan & Cost Estimation
+  dependsOn: CodeScanning
+  jobs:
+  - job: plan_and_cost
+    displayName: Plan & Infracost
+    steps:
+    - task: TerraformInstaller@1
+      displayName: Install Terraform
+      inputs:
+        terraformVersion: $(TF_VERSION)
+
+    - task: AzureCLI@2
+      displayName: Azure login
+      inputs:
+        azureSubscription: $(azureSubscription)
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: az account show
+
+    - task: CmdLine@2
+      displayName: Terraform Init & Validate
+      inputs:
+        script: |
+          cd $(TF_WORKING_DIR)
+          terraform init -input=false
+          terraform validate
+
+    - task: CmdLine@2
+      displayName: Terraform Plan
+      inputs:
+        script: |
+          cd $(TF_WORKING_DIR)
+          terraform plan -input=false -var-file="$(TFVARS_FILE)" -out=tfplan -no-color
+
+    - task: CmdLine@2
+      displayName: Install Infracost & run cost estimation
+      inputs:
+        script: |
+          curl -fsSL https://raw.githubusercontent.com/infracost/infracost/master/scripts/install.sh | sh
+          cd $(TF_WORKING_DIR)
+          terraform show -json tfplan > plan.json
+          echo "=============================================="
+          echo "  INFRASTRUCTURE COST ESTIMATION (INFRACOST)"
+          echo "=============================================="
+          infracost breakdown --path plan.json --format table --show-skipped || true
+          infracost breakdown --path plan.json --format json --out-file infracost-report.json || true
+
+    - task: PublishBuildArtifacts@1
+      displayName: Publish cost report (JSON)
+      inputs:
+        PathtoPublish: $(TF_WORKING_DIR)/infracost-report.json
+        ArtifactName: infracost-report
+        publishLocation: Container
+      continueOnError: true

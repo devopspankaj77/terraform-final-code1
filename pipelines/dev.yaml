@@ -1,0 +1,141 @@
+# trigger:
+#   branches:
+#     include:
+#     - Main 
+#     - feature/*
+# pool:
+#   name: Default
+# stages:
+# - stage: CodeScanning
+#   displayName: Code Scanning
+#   jobs:
+#   - job: tflint
+#     displayName: Terraform Lint Check
+#     steps:
+#     - task: CmdLine@2
+#       inputs:
+#         script: |
+#           curl -s https://raw.githubusercontent.com/terraform-linters/tflint/master/install_linux.sh | bash
+#           tflint --init
+#           tflint
+#   - job: tfsec
+#     displayName: Terraform Security Scan
+#     steps:
+#     - task: CmdLine@2
+#       displayName: Install & Run tfsec
+#       inputs:
+#         script: |
+#           set -e
+
+#           curl -s https://raw.githubusercontent.com/aquasecurity/tfsec/master/scripts/install_linux.sh | bash
+#           tfsec . || true
+
+#   - job: terrascan
+#     displayName: Terraform Compliance Scan
+#     steps:
+#     - task: CmdLine@2
+#       displayName: Install & Run Terrascan
+#       inputs:
+#         script: |
+#           set -e
+
+#           cd /tmp
+
+#           curl -fLsS \
+#             --retry 5 \
+#             --retry-delay 5 \
+#             --connect-timeout 30 \
+#             --max-time 600 \
+#             -o terrascan.tar.gz \
+#             https://github.com/tenable/terrascan/releases/download/v1.19.1/terrascan_1.19.1_Linux_x86_64.tar.gz
+
+#           tar -xzf terrascan.tar.gz
+#           chmod +x terrascan
+#           sudo mv terrascan /usr/local/bin/terrascan
+
+#           terrascan init --non-interactive
+#           terrascan scan -t azurerm -i terraform || true
+# # - stage: PreCommit
+# #   displayName: Pre-Commit / Static Analysis Stage
+# #   dependsOn:
+# #   - CodeScanning
+# #   jobs:
+# #   - job: terraform_init_validate
+# #     steps:
+# #     - task: TerraformInstaller@1
+# #       inputs:
+# #         terraformVersion: 'latest'
+# #     - task: TerraformTask@5
+# #       inputs:
+# #         provider: 'azurerm'
+# #         command: 'init'
+# #         backendServiceArm: 'iDSsec1'
+# #         backendAzureRmStorageAccountName: 'stgiddev0001'
+# #         backendAzureRmContainerName: 'coniddev001'
+# #         backendAzureRmKey: 'dev-tfstate'
+# #     - task: TerraformTask@5
+# #       inputs:
+# #         provider: 'azurerm'
+# #         command: 'validate'
+# # - stage: terratest
+# #   displayName: Terratest
+# #   dependsOn:
+# #   - PreCommit
+# #   jobs:
+# #   - job: terratest
+# #     steps:
+# #     - task: CmdLine@2
+# #       inputs:
+# #         script: |
+# #           go test ./tests -v
+# # - stage: InfraInitialize
+# #   displayName: Infra Initialize
+# #   dependsOn:
+# #   - terratest
+# #   jobs:
+# #   - job: terraform_plan
+# #     steps:
+# #     - task: TerraformTask@5
+# #       inputs:
+# #         provider: 'azurerm'
+# #         command: 'plan'
+# #         commandOptions: '-out=tfplan'
+# #         environmentServiceNameAzureRM: 'iDSsec1'
+# # - stage: FinOps
+# #   displayName: FinOps Cost Estimation
+# #   dependsOn:
+# #   - InfraInitialize
+# #   jobs:
+# #   - job: infracost
+# #     steps:
+# #     - task: CmdLine@2
+# #       inputs:
+# #         script: |
+# #           curl -fsSL https://raw.githubusercontent.com/infracost/infracost/master/scripts/install.sh | sh
+# #           infracost breakdown --path . --show-skipped
+# # - stage: ManualValidation
+# #   displayName: Manual Validation
+# #   dependsOn:
+# #   - FinOps
+# #   jobs:
+# #   - job: approval
+# #     pool:
+# #       name: server
+# #     steps:
+# #     - task: ManualValidation@0
+# #       inputs:
+# #         notifyUsers: 'rohit.nandan@cnovate.io'
+# #         instructions: 'Please review Terraform plan & cost before Production deployment'
+# # - stage: InfraDeployment
+# #   displayName: Infra Deployment
+# #   dependsOn:
+# #   - ManualValidation
+# #   jobs:
+# #   - job: terraform_apply
+# #     steps:
+# #     - task: TerraformTask@5
+# #       inputs:
+# #         provider: 'azurerm'
+# #         command: 'apply'
+# #         commandOptions: 'tfplan'
+# #         environmentServiceNameAzureRM: 'iDSsec1'

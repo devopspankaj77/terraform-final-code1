@@ -1,0 +1,170 @@
+# =============================================================================
+# Dev Environment - Example tfvars (copy to dev.tfvars and set values)
+# Naming: ICR-<nnn>-Azure-<INT|CLT>-<ResourceType>-<Workload> (see docs/NAMING_CONVENTION.md)
+# =============================================================================
+
+# Company-mandatory tags
+created_by       = "Pankaj"
+created_date     = "2026-03-11"
+environment     = "dev"
+requester        = "Application Team"
+ticket_reference = "INC-12345"
+project_name     = "Banking-App"
+
+# Naming
+name_prefix   = "ICR-002"
+project_type  = "INT"
+workload      = "Bank-Dev"
+location      = "centralindia"
+
+# Security: restrict jump RDP/SSH (set via TF_VAR_jump_rdp_source_cidr / TF_VAR_jump_ssh_source_cidr in prod)
+# jump_rdp_source_cidr = "YOUR_IP/32"
+# jump_ssh_source_cidr = "YOUR_IP/32"
+
+# -----------------------------------------------------------------------------
+# Resource groups
+# -----------------------------------------------------------------------------
+resource_groups = {
+  main = {
+    name     = "ICR-002-Azure-INT-RG-Bank-Dev"
+    location = "centralindia"
+    create_lock = false
+    tags     = {}
+  }
+}
+
+# -----------------------------------------------------------------------------
+# VNets (optional)
+# -----------------------------------------------------------------------------
+vnets = {
+  main = {
+    name                = "ICR-002-Azure-INT-VNet-Bank-Dev"
+    resource_group_name = "ICR-002-Azure-INT-RG-Bank-Dev"
+    location            = "centralindia"
+    address_space       = ["10.0.0.0/16"]
+    dns_servers         = []
+    create_nsg          = true
+    nsg_per_subnet      = false
+    create_private_endpoint_subnet = true
+    private_endpoint_subnet_prefix = "10.0.254.0/24"
+    subnets = {
+      web = {
+        name             = "snet-web"
+        address_prefixes = ["10.0.1.0/24"]
+        allow_private_endpoint = false
+      }
+      app = {
+        name             = "snet-app"
+        address_prefixes = ["10.0.2.0/24"]
+      }
+      data = {
+        name             = "snet-data"
+        address_prefixes = ["10.0.3.0/24"]
+      }
+    }
+    nsg_rules = {
+      allow_ssh = {
+        name                   = "AllowSSH"
+        priority               = 100
+        direction              = "Inbound"
+        access                 = "Allow"
+        protocol               = "Tcp"
+        source_port_range      = "*"
+        destination_port_range = "22"
+        source_address_prefix  = "VirtualNetwork"
+        destination_address_prefix = "*"
+      }
+      allow_rdp = {
+        name                   = "AllowRDP"
+        priority               = 110
+        direction              = "Inbound"
+        access                 = "Allow"
+        protocol               = "Tcp"
+        source_port_range      = "*"
+        destination_port_range = "3389"
+        source_address_prefix  = "VirtualNetwork"
+        destination_address_prefix = "*"
+      }
+    }
+    tags = {}
+  }
+}
+
+# -----------------------------------------------------------------------------
+# Storage accounts (optional; names: no hyphens)
+# -----------------------------------------------------------------------------
+# storage_accounts = {
+#   main = {
+#     name                = "icr002azureintstobankdev"
+#     resource_group_name = "ICR-002-Azure-INT-RG-Bank-Dev"
+#     location            = "centralindia"
+#     enable_https_traffic_only = true
+#     min_tls_version     = "TLS1_2"
+#     public_network_access_enabled = false
+#     blob_soft_delete_retention_days = 7
+#     container_soft_delete_retention_days = 7
+#     enable_blob_versioning = false
+#     containers = {
+#       data = { name = "data", access_type = "private" }
+#     }
+#     tags = {}
+#   }
+# }
+
+# -----------------------------------------------------------------------------
+# Key Vaults (optional; name max 24 chars)
+# -----------------------------------------------------------------------------
+# key_vaults = {
+#   main = {
+#     name                        = "ICR-002-kv-bankdev"
+#     resource_group_name         = "ICR-002-Azure-INT-RG-Bank-Dev"
+#     location                    = "centralindia"
+#     enable_rbac_authorization   = true
+#     soft_delete_retention_days  = 90
+#     purge_protection_enabled    = true
+#     public_network_access_enabled = false
+#     network_acls = { default_action = "Deny", bypass = "AzureServices" }
+#     tags = {}
+#   }
+# }
+
+# -----------------------------------------------------------------------------
+# SQL (optional; passwords via TF_VAR or Key Vault)
+# -----------------------------------------------------------------------------
+# sql_servers = {
+#   main = {
+#     name                = "ICR-002-sql-bank-dev"
+#     resource_group_name  = "ICR-002-Azure-INT-RG-Bank-Dev"
+#     location             = "centralindia"
+#     administrator_login  = "sqladmin"
+#     administrator_login_password = "<set-via-TF_VAR or Key Vault>"
+#     minimum_tls_version  = "1.2"
+#     public_network_access_enabled = false
+#     firewall_rules       = {}
+#     databases = {
+#       app = {
+#         name = "sqldb-bank-dev"
+#         max_size_gb = 2
+#         sku_name = "S0"
+#         short_term_retention_days = 7
+#         tags = {}
+#       }
+#     }
+#     tags = {}
+#   }
+# }
+
+# -----------------------------------------------------------------------------
+# Container registries (optional; names: no hyphens)
+# -----------------------------------------------------------------------------
+# registries = {
+#   main = {
+#     name                       = "icr002azureintacrbankdev"
+#     resource_group_name        = "ICR-002-Azure-INT-RG-Bank-Dev"
+#     location                   = "centralindia"
+#     sku                        = "Standard"
+#     admin_enabled              = false
+#     public_network_access_enabled = false
+#     tags = {}
+#   }
+# }

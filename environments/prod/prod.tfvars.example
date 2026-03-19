@@ -1,0 +1,68 @@
+# =============================================================================
+# Prod Environment - Example tfvars (copy to prod.tfvars)
+# Security: enable locks, private endpoints, restrict NSG sources
+# =============================================================================
+
+created_by       = "Pankaj"
+created_date     = "2026-03-11"
+environment     = "prod"
+requester        = "Application Team"
+ticket_reference = "INC-12345"
+project_name     = "Banking-App"
+
+name_prefix  = "jsr-002"
+project_type = "INT"
+workload     = "Bank-Prod"
+location     = "centralindia"
+
+# Prod: restrict jump RDP/SSH via TF_VAR_jump_rdp_source_cidr / TF_VAR_jump_ssh_source_cidr
+# jump_rdp_source_cidr = "10.0.0.0/24"
+# jump_ssh_source_cidr = "10.0.0.0/24"
+
+resource_groups = {
+  main = {
+    name        = "jsr-002-Azure-INT-RG-Bank-Prod"
+    location    = "centralindia"
+    create_lock = true
+    lock_level  = "CanNotDelete"
+    tags        = {}
+  }
+}
+
+vnets = {
+  main = {
+    name                = "jsr-002-Azure-INT-VNet-Bank-Prod"
+    resource_group_name = "jsr-002-Azure-INT-RG-Bank-Prod"
+    location            = "centralindia"
+    address_space       = ["10.0.0.0/16"]
+    create_nsg          = true
+    nsg_per_subnet      = false
+    create_private_endpoint_subnet = true
+    subnets = {
+      web  = { name = "snet-web",  address_prefixes = ["10.0.1.0/24"] }
+      app  = { name = "snet-app",  address_prefixes = ["10.0.2.0/24"] }
+      data = { name = "snet-data", address_prefixes = ["10.0.3.0/24"] }
+    }
+    nsg_rules = {
+      allow_ssh = {
+        name                   = "AllowSSH"
+        priority               = 100
+        direction              = "Inbound"
+        access                 = "Allow"
+        protocol               = "Tcp"
+        destination_port_range = "22"
+        source_address_prefix  = "VirtualNetwork"
+      }
+      allow_rdp = {
+        name                   = "AllowRDP"
+        priority               = 110
+        direction              = "Inbound"
+        access                 = "Allow"
+        protocol               = "Tcp"
+        destination_port_range = "3389"
+        source_address_prefix  = "VirtualNetwork"
+      }
+    }
+    tags = {}
+  }
+}

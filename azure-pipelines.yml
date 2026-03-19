@@ -1,0 +1,193 @@
+# =============================================================================
+# Main pipeline – Terraform infrastructure (dev / prod) + cost estimation
+# This file is at repo root so Azure DevOps detects it when you add a pipeline.
+# To register: Pipelines → New pipeline → select this repo → use "Existing Azure
+# Pipelines YAML file" → select this file (/) or .azuredevops/pipelines/terraform-infra.yml
+# =============================================================================
+
+parameters:
+  - name: environment
+    displayName: 'Environment'
+    type: string
+    default: dev
+    values:
+      - dev
+      - prod
+  - name: runApply
+    displayName: 'Run Terraform Apply (deploy changes)'
+    type: boolean
+    default: false
+
+variables:
+  - name: workingDirectory
+    value: 'environments/$(parameters.environment)'
+  - name: tfvarsFile
+    value: '${{ parameters.environment }}.tfvars'
+  - name: tfVersion
+    value: '1.5.0'
+
+trigger:
+  branches:
+    include:
+      - main
+      - master
+  paths:
+    include:
+      - 'modules/*'
+      - 'environments/*'
+      - '.azuredevops/**'
+      - 'azure-pipelines.yml'
+      - 'pipelines/**'
+
+pr:
+  branches:
+    include:
+      - main
+      - master
+  paths:
+    include:
+      - 'modules/*'
+      - 'environments/*'
+      - '.azuredevops/**'
+      - 'azure-pipelines.yml'
+      - 'pipelines/**'
+
+stages:
+  - stage: Plan
+    displayName: 'Terraform Plan & Cost'
+    jobs:
+      - job: TerraformPlan
+        displayName: 'Init, Validate, Plan & Cost Estimation'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - checkout: self
+            displayName: 'Checkout repository'
+
+          - task: AzureCLI@2
+            displayName: 'Azure login (Service Connection)'
+            inputs:
+              azureSubscription: '$(azureSubscription)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                echo "Logged in to Azure; Terraform will use this identity."
+                az account show
+
+          - script: |
+              set -e
+              TF_VERSION="$(tfVersion)"
+              wget -q -O /tmp/terraform.zip "https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip"
+              unzip -o /tmp/terraform.zip -d /usr/local/bin
+              chmod +x /usr/local/bin/terraform
+              terraform version
+            displayName: 'Install Terraform'
+
+          - script: |
+              cd $(workingDirectory)
+              terraform init -input=false
+              terraform validate
+            displayName: 'Terraform Init & Validate'
+
+          - script: |
+              cd $(workingDirectory)
+              terraform plan \
+                -input=false \
+                -var-file="$(tfvarsFile)" \
+                -out=tfplan \
+                -no-color
+            displayName: 'Terraform Plan'
+
+          - script: |
+              set -e
+              curl -fsSL https://raw.githubusercontent.com/infracost/infracost/master/scripts/install.sh | sh
+              cd $(workingDirectory)
+              terraform show -json tfplan > plan.json
+              echo "=============================================="
+              echo "  INFRASTRUCTURE COST ESTIMATION (INFRACOST)"
+              echo "=============================================="
+              infracost breakdown --path plan.json --format table --show-skipped || true
+              infracost breakdown --path plan.json --format json --out-file infracost-report.json || true
+            displayName: 'Infra cost estimation (Infracost)'
+
+          - task: PublishPipelineArtifact@1
+            condition: always()
+            displayName: 'Publish cost report (JSON)'
+            inputs:
+              targetPath: '$(workingDirectory)/infracost-report.json'
+              artifact: 'infracost-$(parameters.environment)'
+              publishLocation: 'pipeline'
+            continueOnError: true
+
+          - script: |
+              mkdir -p $(Pipeline.Workspace)/plan-out
+              cp $(workingDirectory)/tfplan $(Pipeline.Workspace)/plan-out/tfplan
+            condition: and(succeeded(), eq('${{ parameters.runApply }}', 'true'))
+            displayName: 'Stage plan file for artifact'
+
+          - task: PublishPipelineArtifact@1
+            condition: and(succeeded(), eq('${{ parameters.runApply }}', 'true'))
+            displayName: 'Publish Plan artifact'
+            inputs:
+              targetPath: '$(Pipeline.Workspace)/plan-out'
+              artifact: 'tfplan-$(parameters.environment)'
+              publishLocation: 'pipeline'
+
+  - stage: Apply
+    displayName: 'Terraform Apply'
+    dependsOn: Plan
+    condition: and(succeeded(), eq('${{ parameters.runApply }}', 'true'))
+    jobs:
+      - deployment: TerraformApply
+        displayName: 'Apply infrastructure'
+        pool:
+          vmImage: 'ubuntu-latest'
+        environment: 'tf-${{ parameters.environment }}'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: ManualValidation@0
+                  displayName: 'Approve Terraform Apply'
+                  inputs:
+                    instructions: 'Review the Plan and Cost artifacts, then approve to run Terraform Apply (no auto-approve; apply runs only after this approval).'
+                    onTimeout: 'reject'
+
+                - checkout: self
+                  displayName: 'Checkout repository'
+
+                - task: AzureCLI@2
+                  displayName: 'Azure login'
+                  inputs:
+                    azureSubscription: '$(azureSubscription)'
+                    scriptType: 'bash'
+                    scriptLocation: 'inlineScript'
+                    inlineScript: 'az account show'
+
+                - script: |
+                    set -e
+                    TF_VERSION="$(tfVersion)"
+                    wget -q -O /tmp/terraform.zip "https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip"
+                    unzip -o /tmp/terraform.zip -d /usr/local/bin
+                    chmod +x /usr/local/bin/terraform
+                  displayName: 'Install Terraform'
+
+                - task: DownloadPipelineArtifact@1
+                  displayName: 'Download Plan artifact'
+                  inputs:
+                    buildType: 'current'
+                    artifactName: 'tfplan-$(parameters.environment)'
+                    targetPath: '$(Pipeline.Workspace)/tfplan-artifact'
+
+                - script: |
+                    cd $(workingDirectory)
+                    terraform init -input=false
+                    PLAN_FILE="$(Pipeline.Workspace)/tfplan-artifact/tfplan"
+                    if [ -f "$PLAN_FILE" ]; then
+                      cp "$PLAN_FILE" ./tfplan
+                      echo "yes" | terraform apply -input=false -no-color tfplan
+                    else
+                      echo "No tfplan found; applying with var-file."
+                      echo "yes" | terraform apply -input=false -no-color -var-file="$(tfvarsFile)"
+                    fi
+                  displayName: 'Terraform Apply (confirmation required via Manual Validation above)'
