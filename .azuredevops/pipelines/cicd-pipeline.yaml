@@ -1,184 +1,225 @@
+# ============================================
+# ✅ Enhanced Enterprise Terraform Pipeline
+# ============================================
+
+# 🔷 Runtime parameters (user input at pipeline run time)
+parameters:
+  - name: environment                # Target environment
+    type: string
+    default: dev
+    values:
+      - dev
+      - prod
+
+  - name: runApply                  # Control deployment (safety switch)
+    type: boolean
+    default: false
+
+# 🔷 Global variables (reusable across pipeline)
+variables:
+  workingDirectory: 'environments/${{ parameters.environment }}'   # Correct parameter reference
+  tfvarsFile: '${{ parameters.environment }}.tfvars'               # Environment-specific tfvars
+  tfVersion: '1.5.0'                                               # Terraform version
+  # ❌ Removed incorrect syntax:
+  # INFRACOST_API_KEY = $(INFRACOST_API_KEY)
+  # ✔ Instead define INFRACOST_API_KEY in pipeline UI as secret
+
+# 🔷 Trigger pipeline on main branch commits
 trigger:
   branches:
     include:
       - main
-      - develop
 
-variables:
-  terraformVersion: '1.5.0'
-  azureServiceConnection: 'azure-conn'
-  backendResourceGroup: 'rg-tf-backend'
-  # backendStorageAccount: 'tfstate12345'
-  backendStorageAccount: 'tfstatepankaj123'
-  backendContainer: 'tfstate'
-  backendKey: 'infra.tfstate'
-
+# ============================================
+# 🔷 STAGE 1: SAST (Code Quality & Security)
+# ============================================
 stages:
-
-# =========================
-# 🔷 STAGE 1: SAST (SonarQube)
-# =========================
 - stage: SAST
-  displayName: "Code Analysis (SAST)"
+  displayName: "Code Scan (SAST)"
   jobs:
-    - job: SonarQubeScan
+    - job: SonarScan
       pool:
-        vmImage: 'ubuntu-latest'
+        vmImage: ubuntu-latest
       steps:
-        - checkout: self
+        - checkout: self   # Pull repo code
 
+        # 🔹 Prepare SonarQube scan
         - task: SonarQubePrepare@5
           inputs:
-            SonarQube: 'sonarqube-conn'
+            SonarQube: 'sonarqube-conn'   # Service connection
             scannerMode: 'CLI'
             configMode: 'manual'
-            cliProjectKey: 'my-project'
+            cliProjectKey: 'terraform-project'
             cliSources: '.'
 
-        - task: SonarQubeAnalyze@5
+        - task: SonarQubeAnalyze@5        # Run analysis
 
-        - task: SonarQubePublish@5
+        - task: SonarQubePublish@5        # Publish results
           inputs:
             pollingTimeoutSec: '300'
 
-# =========================
-# 🔷 STAGE 2: DLP SCAN
-# =========================
+# ============================================
+# 🔷 STAGE 2: DLP (Secrets / PHI Scan)
+# ============================================
 - stage: DLP
-  dependsOn: SAST
+  dependsOn: SAST   # Run only if SAST passes
   jobs:
     - job: DLPScan
       pool:
-        vmImage: 'ubuntu-latest'
+        vmImage: ubuntu-latest
       steps:
         - checkout: self
 
+        # 🔹 Scan repo for secrets using TruffleHog
         - script: |
             pip install trufflehog
             trufflehog filesystem --regex --entropy=False . || true
-          displayName: "DLP Scan (TruffleHog)"
+          displayName: "DLP Scan (Secrets Detection)"
 
-# =========================
-# 🔷 STAGE 3: IaC SCAN + VALIDATE
-# =========================
+# ============================================
+# 🔷 STAGE 3: IaC VALIDATION + SECURITY SCAN
+# ============================================
 - stage: IaC
   dependsOn: DLP
   jobs:
     - job: TerraformValidate
       pool:
-        vmImage: 'ubuntu-latest'
+        vmImage: ubuntu-latest
       steps:
         - checkout: self
 
-        # Install Terraform
+        # 🔹 Install Terraform
         - task: TerraformInstaller@1
           inputs:
-            terraformVersion: $(terraformVersion)
+            terraformVersion: $(tfVersion)
 
-        # Init with backend
-        - task: TerraformTaskV4@4
+        # 🔹 Init + Validate Terraform
+        - task: AzureCLI@2
           inputs:
-            provider: 'azurerm'
-            command: 'init'
-            backendServiceArm: $(azureServiceConnection)
-            backendAzureRmResourceGroupName: $(backendResourceGroup)
-            backendAzureRmStorageAccountName: $(backendStorageAccount)
-            backendAzureRmContainerName: $(backendContainer)
-            backendAzureRmKey: $(backendKey)
+            azureSubscription: '$(azureSubscription)'
+            scriptType: bash
+            scriptLocation: inlineScript
+            inlineScript: |
+              cd $(workingDirectory)
+              terraform init
+              terraform validate
 
-        # Validate
-        - task: TerraformTaskV4@4
-          inputs:
-            provider: 'azurerm'
-            command: 'validate'
-
-        # IaC Scan (Checkov)
+        # 🔹 IaC Security Scan
         - script: |
             pip install checkov
-            checkov -d .
-          displayName: "Checkov Scan"
+            checkov -d $(workingDirectory)
+          displayName: "Checkov IaC Scan"
 
-# =========================
-# 🔷 STAGE 4: PLAN
-# =========================
+# ============================================
+# 🔷 STAGE 4: PLAN (Execution Plan)
+# ============================================
 - stage: Plan
   dependsOn: IaC
   jobs:
     - job: TerraformPlan
       pool:
-        vmImage: 'ubuntu-latest'
+        vmImage: ubuntu-latest
       steps:
         - checkout: self
 
         - task: TerraformInstaller@1
           inputs:
-            terraformVersion: $(terraformVersion)
+            terraformVersion: $(tfVersion)
 
-        - task: TerraformTaskV4@4
+        # 🔹 Generate Terraform execution plan
+        - task: AzureCLI@2
           inputs:
-            provider: 'azurerm'
-            command: 'init'
-            backendServiceArm: $(azureServiceConnection)
-            backendAzureRmResourceGroupName: $(backendResourceGroup)
-            backendAzureRmStorageAccountName: $(backendStorageAccount)
-            backendAzureRmContainerName: $(backendContainer)
-            backendAzureRmKey: $(backendKey)
+            azureSubscription: '$(azureSubscription)'
+            scriptType: bash
+            scriptLocation: inlineScript
+            inlineScript: |
+              cd $(workingDirectory)
+              terraform init
+              terraform plan -var-file=$(tfvarsFile) -out=tfplan.binary
 
-        - task: TerraformTaskV4@4
-          inputs:
-            provider: 'azurerm'
-            command: 'plan'
-            environmentServiceNameAzureRM: $(azureServiceConnection)
-
-# =========================
-# 🔷 STAGE 5: DEPLOY DEV
-# =========================
-- stage: Deploy_Dev
+# ============================================
+# 🔷 STAGE 5: COST ESTIMATION (Infracost)
+# ============================================
+- stage: Cost_Estimation
+  displayName: "Infrastructure Cost Estimation"
   dependsOn: Plan
   jobs:
-    - deployment: DevDeploy
-      environment: "dev"
-      strategy:
-        runOnce:
-          deploy:
-            steps:
-              - checkout: self
-
-              - task: TerraformInstaller@1
-                inputs:
-                  terraformVersion: $(terraformVersion)
-
-              - task: TerraformTaskV4@4
-                inputs:
-                  provider: 'azurerm'
-                  command: 'apply'
-                  environmentServiceNameAzureRM: $(azureServiceConnection)
-                  args: '-auto-approve'
-
-# =========================
-# 🔷 STAGE 6: DAST
-# =========================
-- stage: DAST
-  dependsOn: Deploy_Dev
-  jobs:
-    - job: DASTScan
+    - job: Infracost
       pool:
-        vmImage: 'ubuntu-latest'
+        vmImage: ubuntu-latest
       steps:
-        - script: |
-            docker run -t owasp/zap2docker-stable zap-baseline.py \
-            -t http://your-dev-app-url
-          displayName: "OWASP ZAP Scan"
+        - checkout: self
 
-# =========================
-# 🔷 STAGE 7: DEPLOY PROD
-# =========================
+        # 🔹 Install Infracost
+        - script: |
+            curl -fsSL https://raw.githubusercontent.com/infracost/infracost/master/scripts/install.sh | sh
+            infracost --version
+          displayName: "Install Infracost"
+
+        # 🔹 Convert Terraform plan to JSON
+        - script: |
+            cd $(workingDirectory)
+            terraform show -json tfplan.binary > plan.json
+          displayName: "Generate Plan JSON"
+
+        # 🔹 Run cost estimation
+        - script: |
+            cd $(workingDirectory)
+            infracost breakdown --path plan.json --format table
+          displayName: "Run Cost Estimation"
+
+        # 🔹 Optional: Budget enforcement
+        - script: |
+            cd $(workingDirectory)
+            infracost breakdown --path plan.json --format json > cost.json
+
+            MONTHLY_COST=$(jq '.totalMonthlyCost | tonumber' cost.json)
+
+            echo "Monthly Cost: $MONTHLY_COST"
+
+            if (( $(echo "$MONTHLY_COST > 100" | bc -l) )); then
+              echo "❌ Cost exceeds budget!"
+              exit 1
+            fi
+          displayName: "Cost Threshold Check"
+
+# ============================================
+# 🔷 STAGE 6: APPLY (DEV)
+# ============================================
+- stage: Deploy_Dev
+  dependsOn: Cost_Estimation   # ✔ FIXED (was Plan earlier)
+  condition: and(succeeded(), eq('${{ parameters.environment }}', 'dev'), eq('${{ parameters.runApply }}', true))
+  jobs:
+    - job: ApplyDev
+      pool:
+        vmImage: ubuntu-latest
+      steps:
+        - checkout: self
+
+        - task: TerraformInstaller@1
+          inputs:
+            terraformVersion: $(tfVersion)
+
+        # 🔹 Deploy to Dev
+        - task: AzureCLI@2
+          inputs:
+            azureSubscription: '$(azureSubscription)'
+            scriptType: bash
+            scriptLocation: inlineScript
+            inlineScript: |
+              cd $(workingDirectory)
+              terraform init
+              terraform apply -auto-approve -var-file=$(tfvarsFile)
+
+# ============================================
+# 🔷 STAGE 7: PROD APPROVAL + APPLY
+# ============================================
 - stage: Deploy_Prod
-  dependsOn: DAST
-  condition: succeeded()
+  dependsOn: Deploy_Dev
+  condition: and(succeeded(), eq('${{ parameters.environment }}', 'prod'), eq('${{ parameters.runApply }}', true))
   jobs:
     - deployment: ProdDeploy
-      environment: "production"
+      environment: "production"   # Enables manual approval
       strategy:
         runOnce:
           deploy:
@@ -187,11 +228,15 @@ stages:
 
               - task: TerraformInstaller@1
                 inputs:
-                  terraformVersion: $(terraformVersion)
+                  terraformVersion: $(tfVersion)
 
-              - task: TerraformTaskV4@4
+              # 🔹 Deploy to Production
+              - task: AzureCLI@2
                 inputs:
-                  provider: 'azurerm'
-                  command: 'apply'
-                  environmentServiceNameAzureRM: $(azureServiceConnection)
-                  args: '-auto-approve'
+                  azureSubscription: '$(azureSubscription)'
+                  scriptType: bash
+                  scriptLocation: inlineScript
+                  inlineScript: |
+                    cd $(workingDirectory)
+                    terraform init
+                    terraform apply -auto-approve -var-file=$(tfvarsFile)

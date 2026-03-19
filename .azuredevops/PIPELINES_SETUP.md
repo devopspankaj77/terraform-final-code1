@@ -52,3 +52,38 @@ You will then have two pipelines in the project (e.g. "Terraform Infra" and "Ter
 | Scan (TFLint, tfsec) + Plan + Cost      | **`/pipelines/dev_updated.yaml`**          |
 
 After creating each pipeline once as above, they will appear under **Pipelines** and you can run them from the project.
+
+
+
+
+🚀 ✅ What We’ll Add
+🔷 New Stage: Cost Estimation
+
+Uses Infracost
+
+Runs after terraform plan
+
+Shows:
+
+Monthly cost
+
+Cost difference (before vs after)
+
+🔑 Prerequisite (IMPORTANT)
+
+Install Infracost locally once:
+
+curl -fsSL https://raw.githubusercontent.com/infracost/infracost/master/scripts/install.sh | sh
+
+Get API key from:
+👉 https://www.infracost.io/
+
+Add in Azure DevOps:
+
+Go to Pipeline → Variables
+
+Add:
+
+INFRACOST_API_KEY = <your-key>
+
+(mark as secret)
