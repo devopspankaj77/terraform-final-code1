@@ -30,5 +30,3 @@ Canonical modules used by **environments/dev** and **environments/prod**:
 | AKS               | `modules/aks`                     | Yes          |
 | Recovery Services Vault | `modules/recovery-services-vault` | Yes   |
 
-**Removed (duplicate/orphaned):**  
-`azurerm_resource_group`, `azurerm_networking`, `azurerm_key_vault`, `azurerm_sql_server`, `azurerm_sql_database`, `azurerm_compute` — same functionality as the canonical modules above; root did not reference them.

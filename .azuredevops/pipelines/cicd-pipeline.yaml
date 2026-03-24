@@ -15,23 +15,23 @@ parameters:
     type: boolean
     default: false
 
-# 🔷 Global variables (reusable across pipeline)
+#  Global variables (reusable across pipeline)
 variables:
   workingDirectory: 'environments/${{ parameters.environment }}'   # Correct parameter reference
   tfvarsFile: '${{ parameters.environment }}.tfvars'               # Environment-specific tfvars
   tfVersion: '1.5.0'                                               # Terraform version
-  # ❌ Removed incorrect syntax:
+  #  Removed incorrect syntax:
   # INFRACOST_API_KEY = $(INFRACOST_API_KEY)
   # ✔ Instead define INFRACOST_API_KEY in pipeline UI as secret
 
-# 🔷 Trigger pipeline on main branch commits
+#  Trigger pipeline on main branch commits
 trigger:
   branches:
     include:
       - main
 
 # ============================================
-# 🔷 STAGE 1: SAST (Code Quality & Security)
+#  STAGE 1: SAST (Code Quality & Security)
 # ============================================
 stages:
 - stage: SAST

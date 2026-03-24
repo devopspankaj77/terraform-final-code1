@@ -1,3 +1,22 @@
+
+
+
+
+git init
+git checkout -b feature/initial-setup
+git add .
+git commit -m "Initial commit"
+
+git remote add origin https://bitbucket.org/icreontech/unified-dashboard.git
+git pull origin main --rebase   # safer than unrelated histories
+
+git push -u origin feature/initial-setup
+
+
+
+
+
+
 # Introduction 
 TODO: Give a short introduction of your project. Let this section explain the objectives or the motivation behind this project.
 
